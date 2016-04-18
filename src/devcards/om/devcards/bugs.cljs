@@ -472,3 +472,72 @@
   (pprint/pprint @(om/get-indexer reconciler))
 
   )
+
+(defui ComponentA
+  static om/IQuery
+  (query [_]
+    '[[:current-user _]
+      ({:child/props []} {:a :b})]))
+
+(defui ComponentB
+  static om/IQuery
+  (query [_]
+    '[[:current-user _]]))
+
+(defui RootComponent
+  static om/IQueryParams
+  (params [_]
+    {:active-component/query (om/get-query ComponentB)})
+  static om/IQuery
+  (query [_]
+    '[{:com/props ?active-component/query}])
+
+  Object
+  (render
+    [this]
+    (dom/button #js {:onClick #(om/transact! this '[(change/route)])} "swap component")))
+
+(defmulti read (fn [_ k _] k))
+(defmethod read :current-user
+  [{:keys [parser query target] :as env} _ _]
+  (if (nil? target)
+    {:value "abc"}
+    {:remote true}))
+
+(defmethod read :com/props
+  [{:keys [parser query target] :as env} _ _]
+  (let [v (parser env query target)]
+    (if (nil? target)
+      {:value v}
+      {target v})))
+
+(defmethod read :child/props
+  [{:keys [parser query target ast] :as env} _ _]
+  (let [v (parser env query target)]
+    (if (nil? target)
+      {:value v}
+      {:remote (assoc ast :query-root true)} )))
+
+(defn send [_]
+  (fn [{:keys [remote]} _]
+    (.log js/console "remote" remote)))
+
+(declare my-own-reconciler)
+(defn my-mutate
+  [{:keys [state] :as env} _ _]
+  (let [query (om/get-query ComponentA)]
+    {:action
+     (om/set-query! my-own-reconciler {:params {:active-component/query query}})}))
+
+(def my-own-reconciler
+  (om/reconciler
+    {:state (atom {})
+     :parser (om/parser {:read read
+                         :mutate my-mutate
+                         :send (send "http://nothing.com")
+                         })}))
+
+(defcard my-card
+         (dom-node
+           (fn [_ node]
+             (om/add-root! my-own-reconciler RootComponent node))))
